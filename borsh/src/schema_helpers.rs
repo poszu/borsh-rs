@@ -8,15 +8,18 @@ use crate::{BorshDeserialize, BorshSchema, BorshSerialize};
 /// Deserialize this instance from a slice of bytes, but assume that at the beginning we have
 /// bytes describing the schema of the type. We deserialize this schema and verify that it is
 /// correct.
-pub fn try_from_slice_with_schema<T: BorshDeserialize + BorshSchema>(v: &[u8]) -> Result<T> {
-    let (schema, object) = <(BorshSchemaContainer, T)>::try_from_slice(v)?;
-    if T::schema_container() != schema {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Borsh schema does not match",
-        ));
-    }
-    Ok(object)
+pub fn try_from_slice_with_schema<'de, T: BorshDeserialize<'de> + BorshSchema>(
+    v: &'de [u8],
+) -> Result<T> {
+    todo!();
+    // let (schema, object) = <(BorshSchemaContainer, T)>::try_from_slice(v)?;
+    // if T::schema_container() != schema {
+    //     return Err(Error::new(
+    //         ErrorKind::InvalidData,
+    //         "Borsh schema does not match",
+    //     ));
+    // }
+    // Ok(object)
 }
 
 /// Serialize object into a vector of bytes and prefix with the schema serialized as vector of

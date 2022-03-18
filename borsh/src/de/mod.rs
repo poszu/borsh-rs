@@ -27,13 +27,13 @@ const ERROR_OVERFLOW_ON_MACHINE_WITH_32_BIT_USIZE: &str = "Overflow on machine w
 const ERROR_INVALID_ZERO_VALUE: &str = "Expected a non-zero value";
 
 /// A data-structure that can be de-serialized from binary format by NBOR.
-pub trait BorshDeserialize: Sized {
+pub trait BorshDeserialize<'de>: Sized {
     /// Deserializes this instance from a given slice of bytes.
     /// Updates the buffer to point at the remaining bytes.
-    fn deserialize(buf: &mut &[u8]) -> Result<Self>;
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self>;
 
     /// Deserialize this instance from a slice of bytes.
-    fn try_from_slice(v: &[u8]) -> Result<Self> {
+    fn try_from_slice(v: &'de [u8]) -> Result<Self> {
         let mut v_mut = v;
         let result = Self::deserialize(&mut v_mut)?;
         if !v_mut.is_empty() {
@@ -44,7 +44,7 @@ pub trait BorshDeserialize: Sized {
 
     #[inline]
     #[doc(hidden)]
-    fn vec_from_bytes(len: u32, buf: &mut &[u8]) -> Result<Option<Vec<Self>>> {
+    fn vec_from_bytes(len: u32, buf: &mut &'de [u8]) -> Result<Option<Vec<Self>>> {
         let _ = len;
         let _ = buf;
         Ok(None)
@@ -52,16 +52,21 @@ pub trait BorshDeserialize: Sized {
 
     #[inline]
     #[doc(hidden)]
-    fn copy_from_bytes(buf: &mut &[u8], out: &mut [Self]) -> Result<bool> {
+    fn copy_from_bytes(buf: &mut &'de [u8], out: &mut [Self]) -> Result<bool> {
         let _ = buf;
         let _ = out;
         Ok(false)
     }
 }
 
-impl BorshDeserialize for u8 {
+/// Owned equivalent of [`BorshDeserialize`] that only deserializes owned values and does not
+/// require a lifetime.
+pub trait BorshDeserializeOwned: for<'de> BorshDeserialize<'de> {}
+impl<T> BorshDeserializeOwned for T where T: for<'de> BorshDeserialize<'de> {}
+
+impl<'de> BorshDeserialize<'de> for u8 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         if buf.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -106,9 +111,9 @@ impl BorshDeserialize for u8 {
 
 macro_rules! impl_for_integer {
     ($type: ident) => {
-        impl BorshDeserialize for $type {
+        impl<'de> BorshDeserialize<'de> for $type {
             #[inline]
-            fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+            fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
                 if buf.len() < size_of::<$type>() {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
@@ -135,9 +140,9 @@ impl_for_integer!(u128);
 
 macro_rules! impl_for_nonzero_integer {
     ($type: ty) => {
-        impl BorshDeserialize for $type {
+        impl<'de> BorshDeserialize<'de> for $type {
             #[inline]
-            fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+            fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
                 <$type>::new(BorshDeserialize::deserialize(buf)?)
                     .ok_or_else(|| Error::new(ErrorKind::InvalidData, ERROR_INVALID_ZERO_VALUE))
             }
@@ -157,8 +162,8 @@ impl_for_nonzero_integer!(core::num::NonZeroU64);
 impl_for_nonzero_integer!(core::num::NonZeroU128);
 impl_for_nonzero_integer!(core::num::NonZeroUsize);
 
-impl BorshDeserialize for usize {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+impl<'de> BorshDeserialize<'de> for usize {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let u: u64 = BorshDeserialize::deserialize(buf)?;
         let u = usize::try_from(u).map_err(|_| {
             Error::new(
@@ -174,9 +179,9 @@ impl BorshDeserialize for usize {
 // and vice-versa. We disallow NaNs to avoid this issue.
 macro_rules! impl_for_float {
     ($type: ident, $int_type: ident) => {
-        impl BorshDeserialize for $type {
+        impl<'de> BorshDeserialize<'de> for $type {
             #[inline]
-            fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+            fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
                 if buf.len() < size_of::<$type>() {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
@@ -202,9 +207,9 @@ macro_rules! impl_for_float {
 impl_for_float!(f32, u32);
 impl_for_float!(f64, u64);
 
-impl BorshDeserialize for bool {
+impl<'de> BorshDeserialize<'de> for bool {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         if buf.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -225,12 +230,12 @@ impl BorshDeserialize for bool {
     }
 }
 
-impl<T> BorshDeserialize for Option<T>
+impl<'de, T> BorshDeserialize<'de> for Option<T>
 where
-    T: BorshDeserialize,
+    T: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         if buf.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -254,13 +259,13 @@ where
     }
 }
 
-impl<T, E> BorshDeserialize for core::result::Result<T, E>
+impl<'de, T, E> BorshDeserialize<'de> for core::result::Result<T, E>
 where
-    T: BorshDeserialize,
-    E: BorshDeserialize,
+    T: BorshDeserialize<'de>,
+    E: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         if buf.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -284,9 +289,35 @@ where
     }
 }
 
-impl BorshDeserialize for String {
+impl<'de> BorshDeserialize<'de> for &'de [u8] {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
+        let len = u32::deserialize(buf)? as usize;
+        if buf.len() < len {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                ERROR_UNEXPECTED_LENGTH_OF_INPUT,
+            ));
+        }
+        let (front, rest) = buf.split_at(len);
+        *buf = rest;
+        Ok(front)
+    }
+}
+
+impl<'de> BorshDeserialize<'de> for &'de str {
+    #[inline]
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
+        core::str::from_utf8(<&'de [u8]>::deserialize(buf)?).map_err(|err| {
+            let msg = err.to_string();
+            Error::new(ErrorKind::InvalidData, msg)
+        })
+    }
+}
+
+impl<'de> BorshDeserialize<'de> for String {
+    #[inline]
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         String::from_utf8(Vec::<u8>::deserialize(buf)?).map_err(|err| {
             let msg = err.to_string();
             Error::new(ErrorKind::InvalidData, msg)
@@ -294,12 +325,12 @@ impl BorshDeserialize for String {
     }
 }
 
-impl<T> BorshDeserialize for Vec<T>
+impl<'de, T> BorshDeserialize<'de> for Vec<T>
 where
-    T: BorshDeserialize,
+    T: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let len = u32::deserialize(buf)?;
         if len == 0 {
             Ok(Vec::new())
@@ -326,70 +357,70 @@ where
     }
 }
 
-impl<T> BorshDeserialize for Cow<'_, T>
+impl<'de, T> BorshDeserialize<'de> for Cow<'_, T>
 where
     T: ToOwned + ?Sized,
-    T::Owned: BorshDeserialize,
+    T::Owned: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         Ok(Cow::Owned(BorshDeserialize::deserialize(buf)?))
     }
 }
 
-impl<T> BorshDeserialize for VecDeque<T>
+impl<'de, T> BorshDeserialize<'de> for VecDeque<T>
 where
-    T: BorshDeserialize,
+    T: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let vec = <Vec<T>>::deserialize(buf)?;
         Ok(vec.into())
     }
 }
 
-impl<T> BorshDeserialize for LinkedList<T>
+impl<'de, T> BorshDeserialize<'de> for LinkedList<T>
 where
-    T: BorshDeserialize,
+    T: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let vec = <Vec<T>>::deserialize(buf)?;
         Ok(vec.into_iter().collect::<LinkedList<T>>())
     }
 }
 
-impl<T> BorshDeserialize for BinaryHeap<T>
+impl<'de, T> BorshDeserialize<'de> for BinaryHeap<T>
 where
-    T: BorshDeserialize + Ord,
+    T: BorshDeserialize<'de> + Ord,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let vec = <Vec<T>>::deserialize(buf)?;
         Ok(vec.into_iter().collect::<BinaryHeap<T>>())
     }
 }
 
-impl<T, H> BorshDeserialize for HashSet<T, H>
+impl<'de, T, H> BorshDeserialize<'de> for HashSet<T, H>
 where
-    T: BorshDeserialize + Eq + Hash,
+    T: BorshDeserialize<'de> + Eq + Hash,
     H: BuildHasher + Default,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let vec = <Vec<T>>::deserialize(buf)?;
         Ok(vec.into_iter().collect::<HashSet<T, H>>())
     }
 }
 
-impl<K, V, H> BorshDeserialize for HashMap<K, V, H>
+impl<'de, K, V, H> BorshDeserialize<'de> for HashMap<K, V, H>
 where
-    K: BorshDeserialize + Eq + Hash,
-    V: BorshDeserialize,
+    K: BorshDeserialize<'de> + Eq + Hash,
+    V: BorshDeserialize<'de>,
     H: BuildHasher + Default,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let len = u32::deserialize(buf)?;
         // TODO(16): return capacity allocation when we can safely do that.
         let mut result = HashMap::with_hasher(H::default());
@@ -402,24 +433,24 @@ where
     }
 }
 
-impl<T> BorshDeserialize for BTreeSet<T>
+impl<'de, T> BorshDeserialize<'de> for BTreeSet<T>
 where
-    T: BorshDeserialize + Ord,
+    T: BorshDeserialize<'de> + Ord,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let vec = <Vec<T>>::deserialize(buf)?;
         Ok(vec.into_iter().collect::<BTreeSet<T>>())
     }
 }
 
-impl<K, V> BorshDeserialize for BTreeMap<K, V>
+impl<'de, K, V> BorshDeserialize<'de> for BTreeMap<K, V>
 where
-    K: BorshDeserialize + Ord + core::hash::Hash,
-    V: BorshDeserialize,
+    K: BorshDeserialize<'de> + Ord + core::hash::Hash,
+    V: BorshDeserialize<'de>,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let len = u32::deserialize(buf)?;
         let mut result = BTreeMap::new();
         for _ in 0..len {
@@ -432,9 +463,9 @@ where
 }
 
 #[cfg(feature = "std")]
-impl BorshDeserialize for std::net::SocketAddr {
+impl<'de> BorshDeserialize<'de> for std::net::SocketAddr {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let kind = u8::deserialize(buf)?;
         match kind {
             0 => std::net::SocketAddrV4::deserialize(buf).map(std::net::SocketAddr::V4),
@@ -448,9 +479,9 @@ impl BorshDeserialize for std::net::SocketAddr {
 }
 
 #[cfg(feature = "std")]
-impl BorshDeserialize for std::net::SocketAddrV4 {
+impl<'de> BorshDeserialize<'de> for std::net::SocketAddrV4 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let ip = std::net::Ipv4Addr::deserialize(buf)?;
         let port = u16::deserialize(buf)?;
         Ok(std::net::SocketAddrV4::new(ip, port))
@@ -458,9 +489,9 @@ impl BorshDeserialize for std::net::SocketAddrV4 {
 }
 
 #[cfg(feature = "std")]
-impl BorshDeserialize for std::net::SocketAddrV6 {
+impl<'de> BorshDeserialize<'de> for std::net::SocketAddrV6 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let ip = std::net::Ipv6Addr::deserialize(buf)?;
         let port = u16::deserialize(buf)?;
         Ok(std::net::SocketAddrV6::new(ip, port, 0, 0))
@@ -468,9 +499,9 @@ impl BorshDeserialize for std::net::SocketAddrV6 {
 }
 
 #[cfg(feature = "std")]
-impl BorshDeserialize for std::net::Ipv4Addr {
+impl<'de> BorshDeserialize<'de> for std::net::Ipv4Addr {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         if buf.len() < 4 {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -485,9 +516,9 @@ impl BorshDeserialize for std::net::Ipv4Addr {
 }
 
 #[cfg(feature = "std")]
-impl BorshDeserialize for std::net::Ipv6Addr {
+impl<'de> BorshDeserialize<'de> for std::net::Ipv6Addr {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         if buf.len() < 16 {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -501,13 +532,13 @@ impl BorshDeserialize for std::net::Ipv6Addr {
     }
 }
 
-impl<T, U> BorshDeserialize for Box<T>
+impl<'de, T, U> BorshDeserialize<'de> for Box<T>
 where
     U: Into<Box<T>> + Borrow<T>,
     T: ToOwned<Owned = U> + ?Sized,
-    T::Owned: BorshDeserialize,
+    T::Owned: BorshDeserialize<'de>,
 {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         Ok(T::Owned::deserialize(buf)?.into())
     }
 }
@@ -517,12 +548,12 @@ const _: () = {
     macro_rules! impl_arrays {
         ($($len:expr)+) => {
         $(
-            impl<T> BorshDeserialize for [T; $len]
+            impl<'de, T> BorshDeserialize<'de> for [T; $len]
             where
-                T: BorshDeserialize + Default + Copy
+                T: BorshDeserialize<'de> + Default + Copy
             {
                 #[inline]
-                fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+                fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
                     let mut result = [T::default(); $len];
                     if !T::copy_from_bytes(buf, &mut result)? {
                         for i in 0..$len {
@@ -538,24 +569,24 @@ const _: () = {
 
     impl_arrays!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 64 65 128 256 512 1024 2048);
 
-    impl<T> BorshDeserialize for [T; 0]
+    impl<'de, T> BorshDeserialize<'de> for [T; 0]
     where
-        T: BorshDeserialize + Default + Copy,
+        T: BorshDeserialize<'de> + Default + Copy,
     {
         #[inline]
-        fn deserialize(_buf: &mut &[u8]) -> Result<Self> {
+        fn deserialize(_buf: &mut &'de [u8]) -> Result<Self> {
             Ok([T::default(); 0])
         }
     }
 };
 
 #[cfg(feature = "const-generics")]
-impl<T, const N: usize> BorshDeserialize for [T; N]
+impl<'de, T, const N: usize> BorshDeserialize<'de> for [T; N]
 where
-    T: BorshDeserialize + Default + Copy,
+    T: BorshDeserialize<'de> + Default + Copy,
 {
     #[inline]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         let mut result = [T::default(); N];
         if N > 0 && !T::copy_from_bytes(buf, &mut result)? {
             for i in 0..N {
@@ -566,20 +597,19 @@ where
     }
 }
 
-impl BorshDeserialize for () {
-    fn deserialize(_buf: &mut &[u8]) -> Result<Self> {
+impl<'de> BorshDeserialize<'de> for () {
+    fn deserialize(_buf: &mut &'de [u8]) -> Result<Self> {
         Ok(())
     }
 }
 
 macro_rules! impl_tuple {
     ($($name:ident)+) => {
-      impl<$($name),+> BorshDeserialize for ($($name),+)
-      where $($name: BorshDeserialize,)+
+      impl<'de, $($name),+> BorshDeserialize<'de> for ($($name),+)
+      where $($name: BorshDeserialize<'de>,)+
       {
         #[inline]
-        fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-
+        fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
             Ok(($($name::deserialize(buf)?,)+))
         }
       }
@@ -607,31 +637,31 @@ impl_tuple!(T0 T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18);
 impl_tuple!(T0 T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T19);
 
 #[cfg(feature = "rc")]
-impl<T, U> BorshDeserialize for Rc<T>
+impl<'de, T, U> BorshDeserialize<'de> for Rc<T>
 where
     U: Into<Rc<T>> + Borrow<T>,
     T: ToOwned<Owned = U> + ?Sized,
-    T::Owned: BorshDeserialize,
+    T::Owned: BorshDeserialize<'de>,
 {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         Ok(T::Owned::deserialize(buf)?.into())
     }
 }
 
 #[cfg(feature = "rc")]
-impl<T, U> BorshDeserialize for Arc<T>
+impl<'de, T, U> BorshDeserialize<'de> for Arc<T>
 where
     U: Into<Arc<T>> + Borrow<T>,
     T: ToOwned<Owned = U> + ?Sized,
-    T::Owned: BorshDeserialize,
+    T::Owned: BorshDeserialize<'de>,
 {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    fn deserialize(buf: &mut &'de [u8]) -> Result<Self> {
         Ok(T::Owned::deserialize(buf)?.into())
     }
 }
 
-impl<T: ?Sized> BorshDeserialize for PhantomData<T> {
-    fn deserialize(_: &mut &[u8]) -> Result<Self> {
+impl<'de, T: ?Sized> BorshDeserialize<'de> for PhantomData<T> {
+    fn deserialize(_: &mut &'de [u8]) -> Result<Self> {
         Ok(Self::default())
     }
 }

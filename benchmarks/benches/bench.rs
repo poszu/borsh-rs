@@ -11,7 +11,7 @@ fn ser_obj<T>(group_name: &str, num_samples: usize, c: &mut Criterion)
 where
     for<'a> T: Generate
         + BorshSerialize
-        + BorshDeserialize
+        + BorshDeserialize<'a>
         + SerdeSerialize
         + SerdeDeserialize<'a>
         + Readable<'a, speedy::Endianness>
@@ -68,7 +68,7 @@ fn de_obj<T>(group_name: &str, num_samples: usize, c: &mut Criterion)
 where
     for<'a> T: Generate
         + BorshSerialize
-        + BorshDeserialize
+        + BorshDeserialize<'a>
         + SerdeSerialize
         + SerdeDeserialize<'a>
         + Readable<'a, speedy::Endianness>

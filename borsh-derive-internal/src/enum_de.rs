@@ -4,11 +4,12 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Fields, Ident, ItemEnum, WhereClause};
 
-use crate::attribute_helpers::{contains_initialize_with, contains_skip};
+use crate::{attribute_helpers::{contains_initialize_with, contains_skip}, de::add_de_params};
 
 pub fn enum_de(input: &ItemEnum, cratename: Ident) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let generics = add_de_params(input.generics.clone());
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let mut where_clause = where_clause.map_or_else(
         || WhereClause {
             where_token: Default::default(),
@@ -54,7 +55,7 @@ pub fn enum_de(input: &ItemEnum, cratename: Ident) -> syn::Result<TokenStream2> 
                         let field_type = &field.ty;
                         where_clause.predicates.push(
                             syn::parse2(quote! {
-                                #field_type: #cratename::BorshDeserialize
+                                #field_type: #cratename::BorshDeserialize<'_de>
                             })
                             .unwrap(),
                         );
@@ -74,10 +75,14 @@ pub fn enum_de(input: &ItemEnum, cratename: Ident) -> syn::Result<TokenStream2> 
     let variant_idx = quote! {
         let variant_idx: u8 = #cratename::BorshDeserialize::deserialize(buf)?;
     };
+
+    // TODO this is janky, fix
+    let mut ig = input.generics.clone();
+    ig.params.insert(0, syn::parse2(quote! {'de}).unwrap());
     if let Some(method_ident) = init_method {
         Ok(quote! {
-            impl #impl_generics #cratename::de::BorshDeserialize for #name #ty_generics #where_clause {
-                fn deserialize(buf: &mut &[u8]) -> core::result::Result<Self, #cratename::maybestd::io::Error> {
+            impl #impl_generics #cratename::de::BorshDeserialize<'de> for #name #ty_generics #where_clause {
+                fn deserialize(buf: &mut &'de [u8]) -> core::result::Result<Self, #cratename::maybestd::io::Error> {
                     #variant_idx
                     let mut return_value = match variant_idx {
                         #variant_arms
@@ -97,8 +102,8 @@ pub fn enum_de(input: &ItemEnum, cratename: Ident) -> syn::Result<TokenStream2> 
         })
     } else {
         Ok(quote! {
-            impl #impl_generics #cratename::de::BorshDeserialize for #name #ty_generics #where_clause {
-                fn deserialize(buf: &mut &[u8]) -> core::result::Result<Self, #cratename::maybestd::io::Error> {
+            impl #impl_generics #cratename::de::BorshDeserialize<'de> for #name #ty_generics #where_clause {
+                fn deserialize(buf: &mut &'de [u8]) -> core::result::Result<Self, #cratename::maybestd::io::Error> {
                     #variant_idx
                     let return_value = match variant_idx {
                         #variant_arms

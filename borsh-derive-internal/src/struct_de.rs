@@ -2,7 +2,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Fields, Ident, ItemStruct, WhereClause};
 
-use crate::attribute_helpers::{contains_initialize_with, contains_skip};
+use crate::attribute_helpers::{contains_initialize_with, contains_skip, contains_validate_with};
 
 pub fn struct_de(input: &ItemStruct, cratename: Ident) -> syn::Result<TokenStream2> {
     let name = &input.ident;
@@ -15,6 +15,7 @@ pub fn struct_de(input: &ItemStruct, cratename: Ident) -> syn::Result<TokenStrea
         Clone::clone,
     );
     let init_method = contains_initialize_with(&input.attrs)?;
+    let validate_method = contains_validate_with(&input.attrs)?;
     let return_value = match &input.fields {
         Fields::Named(fields) => {
             let mut body = TokenStream2::new();
@@ -61,12 +62,18 @@ pub fn struct_de(input: &ItemStruct, cratename: Ident) -> syn::Result<TokenStrea
             }
         }
     };
+    let validate = if let Some(method_ident) = validate_method {
+        quote! { return_value.#method_ident()?; }
+    } else {
+        quote! {}
+    };
     if let Some(method_ident) = init_method {
         Ok(quote! {
             impl #impl_generics #cratename::de::BorshDeserialize for #name #ty_generics #where_clause {
                 fn deserialize(buf: &mut &[u8]) -> ::core::result::Result<Self, #cratename::maybestd::io::Error> {
                     let mut return_value = #return_value;
                     return_value.#method_ident();
+                    #validate
                     Ok(return_value)
                 }
             }
@@ -75,7 +82,9 @@ pub fn struct_de(input: &ItemStruct, cratename: Ident) -> syn::Result<TokenStrea
         Ok(quote! {
             impl #impl_generics #cratename::de::BorshDeserialize for #name #ty_generics #where_clause {
                 fn deserialize(buf: &mut &[u8]) -> ::core::result::Result<Self, #cratename::maybestd::io::Error> {
-                    Ok(#return_value)
+                    let return_value = #return_value;
+                    #validate
+                    Ok(return_value)
                 }
             }
         })
